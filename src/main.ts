@@ -12,14 +12,14 @@ type LoaderShape = {
   getTransform: (frame: number) => Transform;
 };
 
-const BACKGROUND_HEX = '#faf8f4';
+const BACKGROUND_HEX = '#faf7f4';
 const BASE_RECT_SIZE = 105;
 const DPR_LIMIT = 2;
 
 const WHITE: RGB = [1, 1, 1];
 const ORANGE: RGB = [254 / 255, 60 / 255, 1 / 255];
 const INK: RGB = [36 / 255, 30 / 255, 32 / 255];
-const BACKGROUND: RGB = [250 / 255, 248 / 255, 244 / 255];
+const BACKGROUND: RGB = [250 / 255, 247 / 255, 244 / 255];
 
 const INNER_BASE_SCALE = 1;
 const OUTER_BASE_SCALE = 1.51;
