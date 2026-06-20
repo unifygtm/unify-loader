@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unify Loader</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='7' y='7' width='18' height='18' fill='%23FAF8F4' stroke='%23241E20' stroke-width='3'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      color-scheme: light;
+      background: #faf8f4;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      min-width: 100%;
+      min-height: 100%;
+      margin: 0;
+      background: #faf8f4;
+    }
+
+    body {
+      overflow: hidden;
+      background: #faf8f4;
+    }
+
+    .loader-page {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      min-height: 520px;
+      overflow: hidden;
+      background: #faf8f4;
+    }
+
+    .loader-canvas {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 100vmax;
+      height: 100vmax;
+      display: block;
+      background: transparent;
+      transform: translate(-50%, -50%);
+    }
+  </style>
+</head>
+<body>
+  <main class="loader-page">
+    <canvas id="loaderCanvas" class="loader-canvas" aria-label="Unify loading animation"></canvas>
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
