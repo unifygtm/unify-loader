@@ -12,14 +12,50 @@ type LoaderShape = {
   getTransform: (frame: number) => Transform;
 };
 
-const BACKGROUND_HEX = '#faf7f4';
+type LoaderTheme = {
+  backgroundHex: string;
+  shadows: RGB;
+  midtones: RGB;
+  highlights: RGB;
+};
+
+type OutroShapeState = {
+  startFrame: number;
+  start: Transform;
+  rotationVelocity: number;
+};
+
+type OutroState = {
+  startFrame: number;
+  inner: OutroShapeState;
+  outer: OutroShapeState;
+};
+
+const LIGHT_BACKGROUND_HEX = '#faf7f4';
+const DARK_BACKGROUND_HEX = '#1B191A';
 const BASE_RECT_SIZE = 105;
 const DPR_LIMIT = 2;
 
 const WHITE: RGB = [1, 1, 1];
 const ORANGE: RGB = [254 / 255, 60 / 255, 1 / 255];
 const INK: RGB = [36 / 255, 30 / 255, 32 / 255];
-const BACKGROUND: RGB = [250 / 255, 247 / 255, 244 / 255];
+const WARM_WHITE: RGB = [244 / 255, 238 / 255, 232 / 255];
+const LIGHT_BACKGROUND: RGB = [250 / 255, 247 / 255, 244 / 255];
+const DARK_BACKGROUND: RGB = [27 / 255, 25 / 255, 26 / 255];
+const LIGHT_THEME: LoaderTheme = {
+  backgroundHex: LIGHT_BACKGROUND_HEX,
+  shadows: INK,
+  midtones: ORANGE,
+  highlights: LIGHT_BACKGROUND,
+};
+const DARK_THEME: LoaderTheme = {
+  backgroundHex: DARK_BACKGROUND_HEX,
+  shadows: WARM_WHITE,
+  midtones: ORANGE,
+  highlights: DARK_BACKGROUND,
+};
+const START_LABEL = 'Start Load';
+const END_LABEL = 'End Load';
 
 const INNER_BASE_SCALE = 1;
 const OUTER_BASE_SCALE = 1.51;
@@ -51,10 +87,22 @@ const INNER_EASING = [0.89, 0, 0.11, 1] as const;
 const OUTER_EASING = [0.2, 0, 0.11, 1] as const;
 
 const FPS = 30;
+const OUTRO_STAGGER_SECONDS = 0.05;
+const OUTRO_STAGGER_FRAMES = OUTRO_STAGGER_SECONDS * FPS;
+const OUTRO_INNER_SCALE_FRAMES = (INTRO_INNER_SCALE_END_FRAME - INTRO_INNER_START_FRAME) / INTRO_SPEED;
+const OUTRO_INNER_ROTATION_FRAMES = (INTRO_INNER_ROTATION_END_FRAME - INTRO_INNER_START_FRAME) / INTRO_SPEED;
+const OUTRO_OUTER_SCALE_FRAMES = (INTRO_OUTER_SCALE_END_FRAME - INTRO_OUTER_START_FRAME) / INTRO_SPEED;
+const OUTRO_OUTER_ROTATION_FRAMES = (INTRO_OUTER_ROTATION_END_FRAME - INTRO_OUTER_START_FRAME) / INTRO_SPEED;
+const OUTRO_INNER_ROTATION_DELTA = INNER_BASE_ROTATION - 180;
+const OUTRO_OUTER_ROTATION_DELTA = OUTER_BASE_ROTATION;
+const OUTRO_TOTAL_FRAMES = OUTRO_STAGGER_FRAMES + Math.max(OUTRO_OUTER_SCALE_FRAMES, OUTRO_OUTER_ROTATION_FRAMES);
+
 const ECHO_COUNT = 50;
 const ECHO_TIME_SECONDS = -0.002;
 const ECHO_STEP_FRAMES = ECHO_TIME_SECONDS * FPS;
 const ECHO_DECAY = 0.93;
+const OUTRO_ECHO_TAIL_FRAMES = ECHO_COUNT * -ECHO_STEP_FRAMES;
+const OUTRO_DONE_FRAMES = OUTRO_TOTAL_FRAMES + OUTRO_ECHO_TAIL_FRAMES;
 const FLOATS_PER_INSTANCE = 8;
 const INSTANCES_PER_SHAPE = 1 + ECHO_COUNT;
 
@@ -131,7 +179,7 @@ void main() {
   }
 
   if (max(max(src.r, src.g), src.b) < 0.001) {
-    fragColor = vec4(0.0, 0.0, 0.0, alpha);
+    fragColor = vec4(u_shadows, alpha);
     return;
   }
 
@@ -145,11 +193,18 @@ void main() {
 const canvasElement = document.getElementById('loaderCanvas') as HTMLCanvasElement | null;
 if (!canvasElement) throw new Error('Missing #loaderCanvas');
 const canvas = canvasElement;
+const endButtonElement = document.getElementById('endLoadButton') as HTMLButtonElement | null;
+if (!endButtonElement) throw new Error('Missing #endLoadButton');
+const endButton = endButtonElement;
 
 let rectSize = BASE_RECT_SIZE;
 let frame = 0;
 let lastTime = 0;
 let rafId = 0;
+let outroState: OutroState | null = null;
+let outroComplete = false;
+const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+let activeTheme: LoaderTheme = darkModeQuery.matches ? DARK_THEME : LIGHT_THEME;
 
 function cubicBezier(x1: number, y1: number, x2: number, y2: number, t: number): number {
   if (t <= 0) return 0;
@@ -173,6 +228,34 @@ function cubicBezier(x1: number, y1: number, x2: number, y2: number, t: number):
 
 function applyEase(t: number, easing: readonly [number, number, number, number]): number {
   return cubicBezier(easing[0], easing[1], easing[2], easing[3], t);
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function applyMirroredEase(t: number, easing: readonly [number, number, number, number]): number {
+  return 1 - applyEase(1 - clamp01(t), easing);
+}
+
+function clockwiseRotationDelta(previous: number, current: number): number {
+  let delta = current - previous;
+  while (delta < 0) delta += 360;
+  return delta > 45 ? 0 : delta;
+}
+
+function rotationVelocityAt(
+  getTransform: (sampleFrame: number) => Transform,
+  sampleFrame: number,
+  rotationDelta: number,
+  rotationFrames: number
+): number {
+  const averageVelocity = rotationDelta / rotationFrames;
+  const sampledVelocity = clockwiseRotationDelta(
+    getTransform(sampleFrame - 1).rotation,
+    getTransform(sampleFrame).rotation
+  );
+  return Math.max(averageVelocity, sampledVelocity);
 }
 
 function introInnerTransform(sampleFrame: number): Transform {
@@ -246,9 +329,57 @@ function innerTransform(sampleFrame: number): Transform {
   return breatheTransform(sampleFrame - INTRO_TOTAL_FRAMES, INNER_BASE_SCALE, INNER_BASE_ROTATION, 0, INNER_MOVE_FRAMES, INNER_EASING);
 }
 
+function outroTransform(
+  state: OutroShapeState,
+  sampleFrame: number,
+  scaleFrames: number,
+  rotationFrames: number,
+  rotationDelta: number,
+  easing: readonly [number, number, number, number]
+): Transform {
+  const f = sampleFrame - state.startFrame;
+  if (f <= 0) return state.start;
+
+  const scaleProgress = applyMirroredEase(f / scaleFrames, easing);
+  const rotationProgress = applyMirroredEase(f / rotationFrames, easing);
+  const rotationMomentum = state.rotationVelocity * rotationFrames * (
+    clamp01(f / rotationFrames) - 0.5 * clamp01(f / rotationFrames) ** 2
+  );
+  return {
+    x: state.start.x,
+    y: state.start.y,
+    scale: state.start.scale * (1 - scaleProgress),
+    rotation: state.start.rotation + rotationMomentum + rotationDelta * rotationProgress,
+  };
+}
+
+function activeOuterTransform(sampleFrame: number): Transform {
+  if (!outroState || sampleFrame < outroState.outer.startFrame) return outerTransform(sampleFrame);
+  return outroTransform(
+    outroState.outer,
+    sampleFrame,
+    OUTRO_OUTER_SCALE_FRAMES,
+    OUTRO_OUTER_ROTATION_FRAMES,
+    OUTRO_OUTER_ROTATION_DELTA,
+    OUTER_EASING
+  );
+}
+
+function activeInnerTransform(sampleFrame: number): Transform {
+  if (!outroState || sampleFrame < outroState.inner.startFrame) return innerTransform(sampleFrame);
+  return outroTransform(
+    outroState.inner,
+    sampleFrame,
+    OUTRO_INNER_SCALE_FRAMES,
+    OUTRO_INNER_ROTATION_FRAMES,
+    OUTRO_INNER_ROTATION_DELTA,
+    INNER_EASING
+  );
+}
+
 const shapes: LoaderShape[] = [
-  {strokePx: STROKE_WIDTH / OUTER_BASE_SCALE, getTransform: outerTransform},
-  {strokePx: STROKE_WIDTH, getTransform: innerTransform},
+  {strokePx: STROKE_WIDTH / OUTER_BASE_SCALE, getTransform: activeOuterTransform},
+  {strokePx: STROKE_WIDTH, getTransform: activeInnerTransform},
 ];
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -417,7 +548,7 @@ class LoaderRenderer {
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
-  render(animationFrame: number, shapeSize: number, loaderShapes: LoaderShape[]): void {
+  render(animationFrame: number, shapeSize: number, loaderShapes: LoaderShape[], theme: LoaderTheme): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.width, this.height);
@@ -455,9 +586,9 @@ class LoaderRenderer {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.accTexture);
       gl.uniform1i(this.tritoneAccLoc, 0);
-      gl.uniform3f(this.tritoneShadowsLoc, INK[0], INK[1], INK[2]);
-      gl.uniform3f(this.tritoneMidtonesLoc, ORANGE[0], ORANGE[1], ORANGE[2]);
-      gl.uniform3f(this.tritoneHighlightsLoc, BACKGROUND[0], BACKGROUND[1], BACKGROUND[2]);
+      gl.uniform3f(this.tritoneShadowsLoc, theme.shadows[0], theme.shadows[1], theme.shadows[2]);
+      gl.uniform3f(this.tritoneMidtonesLoc, theme.midtones[0], theme.midtones[1], theme.midtones[2]);
+      gl.uniform3f(this.tritoneHighlightsLoc, theme.highlights[0], theme.highlights[1], theme.highlights[2]);
       gl.bindVertexArray(this.triVao);
       gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
       gl.bindVertexArray(null);
@@ -497,6 +628,11 @@ function resize(): void {
   rectSize = Math.max(82, Math.min(BASE_RECT_SIZE, viewportMin * 0.42)) * scale;
 }
 
+function applyPreferredTheme(): void {
+  activeTheme = darkModeQuery.matches ? DARK_THEME : LIGHT_THEME;
+  document.documentElement.style.background = activeTheme.backgroundHex;
+}
+
 function render(now: number): void {
   rafId = requestAnimationFrame(render);
   if (document.visibilityState === 'hidden') {
@@ -507,15 +643,67 @@ function render(now: number): void {
   const deltaMs = lastTime ? now - lastTime : 1000 / FPS;
   lastTime = now;
   frame += deltaMs * FPS / 1000;
-  renderer.render(frame, rectSize, shapes);
+  renderer.render(frame, rectSize, shapes, activeTheme);
+
+  if (outroState && frame - outroState.startFrame >= OUTRO_DONE_FRAMES) {
+    outroComplete = true;
+    endButton.disabled = false;
+    endButton.textContent = START_LABEL;
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+  }
 }
 
+function startOutro(): void {
+  if (outroState || outroComplete) return;
+  const outerStartFrame = frame + OUTRO_STAGGER_FRAMES;
+  outroState = {
+    startFrame: frame,
+    inner: {
+      startFrame: frame,
+      start: innerTransform(frame),
+      rotationVelocity: rotationVelocityAt(innerTransform, frame, OUTRO_INNER_ROTATION_DELTA, OUTRO_INNER_ROTATION_FRAMES),
+    },
+    outer: {
+      startFrame: outerStartFrame,
+      start: outerTransform(outerStartFrame),
+      rotationVelocity: rotationVelocityAt(outerTransform, outerStartFrame, OUTRO_OUTER_ROTATION_DELTA, OUTRO_OUTER_ROTATION_FRAMES),
+    },
+  };
+  endButton.disabled = true;
+}
+
+function startLoad(): void {
+  if (!outroComplete) return;
+  frame = 0;
+  lastTime = 0;
+  outroState = null;
+  outroComplete = false;
+  endButton.disabled = false;
+  endButton.textContent = END_LABEL;
+  renderer.render(frame, rectSize, shapes, activeTheme);
+  if (!rafId) rafId = requestAnimationFrame(render);
+}
+
+function toggleLoad(): void {
+  if (outroComplete) {
+    startLoad();
+    return;
+  }
+  startOutro();
+}
+
+applyPreferredTheme();
 resize();
 window.addEventListener('resize', resize, {passive: true});
+darkModeQuery.addEventListener('change', applyPreferredTheme);
+endButton.addEventListener('click', toggleLoad);
 rafId = requestAnimationFrame(render);
 
 window.addEventListener('pagehide', () => {
   if (rafId) cancelAnimationFrame(rafId);
+  darkModeQuery.removeEventListener('change', applyPreferredTheme);
+  endButton.removeEventListener('click', toggleLoad);
 }, {once: true});
-
-document.documentElement.style.background = BACKGROUND_HEX;
